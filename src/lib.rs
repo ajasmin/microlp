@@ -56,6 +56,7 @@ mod ordering;
 mod solver;
 mod sparse;
 
+use sprs::errors::StructureError;
 use solver::Solver;
 
 /// An enum indicating whether to minimize or maximize objective function.
@@ -175,13 +176,22 @@ pub enum Error {
     Infeasible,
     /// The objective function is unbounded.
     Unbounded,
+    /// An internal error occurred.
+    InternalError(String),
 }
+impl From<StructureError> for Error {
+    fn from(err: StructureError) -> Self {
+        Error::InternalError(err.to_string())
+    }
+}
+
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let msg = match self {
             Error::Infeasible => "problem is infeasible",
             Error::Unbounded => "problem is unbounded",
+            Error::InternalError(msg) => msg,
         };
         msg.fmt(f)
     }
@@ -276,7 +286,7 @@ impl Problem {
     pub fn add_constraint(&mut self, expr: impl Into<LinearExpr>, cmp_op: ComparisonOp, rhs: f64) {
         let expr = expr.into();
         self.constraints.push((
-            CsVec::new(self.obj_coeffs.len(), expr.vars, expr.coeffs),
+            CsVec::new_from_unsorted(self.obj_coeffs.len(), expr.vars, expr.coeffs).unwrap(),
             cmp_op,
             rhs,
         ));
@@ -373,7 +383,8 @@ impl Solution {
     ) -> Result<Self, Error> {
         let expr = expr.into();
         self.solver.add_constraint(
-            CsVec::new(self.num_vars, expr.vars, expr.coeffs),
+            CsVec::new_from_unsorted(self.num_vars, expr.vars, expr.coeffs)
+                .map_err(|v| Error::InternalError(v.2.to_string()))?,
             cmp_op,
             rhs,
         )?;

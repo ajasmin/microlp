@@ -2,7 +2,7 @@ use sprs::{CsVecBase, CsVecView};
 use std::ops::Deref;
 
 pub(crate) fn resized_view<IStorage, DStorage>(
-    vec: &CsVecBase<IStorage, DStorage>,
+    vec: &CsVecBase<IStorage, DStorage, f64>,
     len: usize,
 ) -> CsVecView<f64>
 where
@@ -21,12 +21,10 @@ where
         data = &data[..(data.len() - 1)];
     }
 
-    // Safety: new indices and data are the same size,indices are still sorted and all indices
-    // are less than the new length. Thus, all CsVecView invariants are satisfied.
-    unsafe { CsVecView::new_view_raw(len, data.len(), indices.as_ptr(), data.as_ptr()) }
+    CsVecView::new(len, indices, data)
 }
 
-pub(crate) fn to_dense<IStorage, DStorage>(vec: &CsVecBase<IStorage, DStorage>) -> Vec<f64>
+pub(crate) fn to_dense<IStorage, DStorage>(vec: &CsVecBase<IStorage, DStorage, f64>) -> Vec<f64>
 where
     IStorage: Deref<Target = [usize]>,
     DStorage: Deref<Target = [f64]>,

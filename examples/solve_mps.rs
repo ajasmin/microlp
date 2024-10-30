@@ -1,4 +1,4 @@
-use minilp::MpsFile;
+use microlp::MpsFile;
 use std::io;
 
 const USAGE: &str = "\
@@ -29,7 +29,7 @@ fn main() {
     }
 
     let filename = &args[1];
-    let direction = minilp::OptimizationDirection::Minimize;
+    let direction = microlp::OptimizationDirection::Minimize;
     let file = if filename == "-" {
         MpsFile::parse(std::io::stdin().lock(), direction).unwrap()
     } else {

@@ -26,7 +26,7 @@ bugs and contribute code!
 Basic usage
 
 ```rust
-use minilp::{Problem, OptimizationDirection, ComparisonOp};
+use microlp::{Problem, OptimizationDirection, ComparisonOp};
 
 // Maximize an objective function x + 2 * y of two variables x >= 0 and 0 <= y <= 3
 let mut problem = Problem::new(OptimizationDirection::Maximize);

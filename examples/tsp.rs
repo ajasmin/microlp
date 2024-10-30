@@ -6,7 +6,7 @@
 #[macro_use]
 extern crate log;
 
-use minilp::{ComparisonOp, LinearExpr, OptimizationDirection, Variable};
+use microlp::{ComparisonOp, LinearExpr, OptimizationDirection, Variable};
 use std::io;
 
 #[derive(Clone, Copy, Debug)]
@@ -214,7 +214,7 @@ fn solve(problem: &Problem) -> Tour {
     let num_points = problem.points.len();
 
     // First, we construct a linear programming model for the TSP problem.
-    let mut lp_problem = minilp::Problem::new(OptimizationDirection::Minimize);
+    let mut lp_problem = microlp::Problem::new(OptimizationDirection::Minimize);
 
     // Variables in our model correspond to edges between nodes (cities). If the tour includes
     // the edge between nodes i and j, then the edge_vars[i][j] variable will be equal to 1.0 in
@@ -271,7 +271,7 @@ fn solve(problem: &Problem) -> Tour {
     // try to fix its value to either 0 or 1. After we explore a branch where one value
     // is chosen, we return and try another value.
     struct Step {
-        start_solution: minilp::Solution, // LP solution right before the step.
+        start_solution: microlp::Solution, // LP solution right before the step.
         var: Variable,
         start_val: u8,
         cur_val: Option<u8>,
@@ -283,7 +283,7 @@ fn solve(problem: &Problem) -> Tour {
     // initial value is the closest integer to the current solution value.
 
     // Returns None if the solution is integral.
-    fn choose_branch_var(cur_solution: &minilp::Solution) -> Option<Variable> {
+    fn choose_branch_var(cur_solution: &microlp::Solution) -> Option<Variable> {
         let mut max_divergence = 0.0;
         let mut max_var = None;
         for (var, &val) in cur_solution {
@@ -296,7 +296,7 @@ fn solve(problem: &Problem) -> Tour {
         max_var
     }
 
-    fn new_step(start_solution: minilp::Solution, var: Variable) -> Step {
+    fn new_step(start_solution: microlp::Solution, var: Variable) -> Step {
         let start_val = if start_solution[var] < 0.5 { 0 } else { 1 };
         Step {
             start_solution,
@@ -396,9 +396,9 @@ fn solve(problem: &Problem) -> Tour {
 /// of some proper subset of nodes must be >= 2. This prevents the formation of closed subtours
 /// that do not pass through all the vertices.
 fn add_subtour_constraints(
-    mut cur_solution: minilp::Solution,
+    mut cur_solution: microlp::Solution,
     edge_vars: &[Vec<Variable>],
-) -> minilp::Solution {
+) -> microlp::Solution {
     let num_points = edge_vars.len();
     let mut edge_weights = Vec::with_capacity(num_points * num_points);
     loop {
@@ -566,7 +566,7 @@ mod tests {
 
 /// Convert a solution to the LP problem to the corresponding tour (a sequence of nodes).
 /// Precondition: the solution must be integral and contain a unique tour.
-fn tour_from_lp_solution(lp_solution: &minilp::Solution, edge_vars: &[Vec<Variable>]) -> Tour {
+fn tour_from_lp_solution(lp_solution: &microlp::Solution, edge_vars: &[Vec<Variable>]) -> Tour {
     let num_points = edge_vars.len();
     let mut tour = vec![];
     let mut is_visited = vec![false; num_points];

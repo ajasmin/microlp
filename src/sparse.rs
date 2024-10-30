@@ -34,7 +34,7 @@ impl SparseVec {
     }
 
     pub(crate) fn into_csvec(self, len: usize) -> CsVec<f64> {
-        CsVec::new(len, self.indices, self.values)
+        CsVec::new_from_unsorted(len, self.indices, self.values).unwrap()
     }
 }
 
@@ -131,7 +131,7 @@ impl ScatteredVec {
                 data.push(val);
             }
         }
-        CsVec::new(self.values.len(), indices, data)
+        CsVec::new_from_unsorted(self.values.len(), indices, data).unwrap()
     }
 }
 
