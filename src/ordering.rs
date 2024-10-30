@@ -10,9 +10,7 @@ pub fn order_simple<'a>(size: usize, get_col: impl Fn(usize) -> &'a [usize]) -> 
     let mut new2orig = Vec::with_capacity(size);
     //TODO bug here
     while new2orig.len() < size {
-    println!("{} {} {}", size, cols_queue.len(), new2orig.len());
         let min = cols_queue.pop_min();
-        println!("{:?}", min);
         new2orig.push(min.unwrap());
     }
 
@@ -425,7 +423,6 @@ impl ColsQueue {
                 return None
             }
             if let Some(col) = self.score2head[self.min_score] {
-                //println!("breaking {:?}", col); //TODO add this to make the code work!
                 break col;
             }
             self.min_score += 1;
