@@ -25,7 +25,7 @@ Alternatively, create an [`MpsFile`](mps/struct.MpsFile.html) by parsing a file 
 # Example
 
 ```
-use minilp::{Problem, OptimizationDirection, ComparisonOp};
+use microlp::{Problem, OptimizationDirection, ComparisonOp};
 
 // Maximize an objective function x + 2 * y of two variables x >= 0 and 0 <= y <= 3
 let mut problem = Problem::new(OptimizationDirection::Maximize);
@@ -262,7 +262,7 @@ impl Problem {
     ///
     /// Left-hand side of the constraint can be specified in several ways:
     /// ```
-    /// # use minilp::*;
+    /// # use microlp::*;
     /// let mut problem = Problem::new(OptimizationDirection::Minimize);
     /// let x = problem.add_var(1.0, (0.0, f64::INFINITY));
     /// let y = problem.add_var(1.0, (0.0, f64::INFINITY));

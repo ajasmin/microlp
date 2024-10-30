@@ -1,7 +1,12 @@
-# minilp
+# microlp
+This is a fork of [minilp](https://github.com/ztlpn/minilp) which i initially made to fix some runtime errors.
+I'm no expert of optimization, if you have any suggestions or improvements feel free to open an issue or a pull request.
 
-[![Crates.io](https://img.shields.io/crates/v/minilp.svg)](https://crates.io/crates/minilp)
-[![Documentation](https://docs.rs/minilp/badge.svg)](https://docs.rs/minilp/)
+## Warning
+currently panics in rust nightly 1.83.0 and 1.84.0 [see here](https://github.com/sparsemat/sprs/issues/370)
+
+[![Crates.io](https://img.shields.io/crates/v/microlp.svg)](https://crates.io/crates/microlp)
+[![Documentation](https://docs.rs/microlp/badge.svg)](https://docs.rs/microlp/)
 
 A fast linear programming solver library.
 
