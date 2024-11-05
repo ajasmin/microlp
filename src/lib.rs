@@ -55,12 +55,13 @@ mod mps;
 mod ordering;
 mod solver;
 mod sparse;
+mod broken_tests;
 
-use sprs::errors::StructureError;
 use solver::Solver;
+use sprs::errors::StructureError;
 
 /// An enum indicating whether to minimize or maximize objective function.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum OptimizationDirection {
     /// Minimize the objective function.
     Minimize,
@@ -185,7 +186,6 @@ impl From<StructureError> for Error {
     }
 }
 
-
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let msg = match self {
@@ -206,6 +206,7 @@ pub struct Problem {
     obj_coeffs: Vec<f64>,
     var_mins: Vec<f64>,
     var_maxs: Vec<f64>,
+    var_domains: Vec<VarDomain>,
     constraints: Vec<(CsVec, ComparisonOp, f64)>,
 }
 
@@ -222,6 +223,15 @@ impl std::fmt::Debug for Problem {
 
 type CsVec = sprs::CsVecI<f64, usize>;
 
+#[derive(Clone, Debug, PartialEq)]
+/// The domain of a variable.
+pub enum VarDomain {
+    /// The variable is integer.
+    Integer,
+    /// The variable is real.
+    Real,
+}
+
 impl Problem {
     /// Create a new problem instance.
     pub fn new(direction: OptimizationDirection) -> Self {
@@ -230,17 +240,49 @@ impl Problem {
             obj_coeffs: vec![],
             var_mins: vec![],
             var_maxs: vec![],
+            var_domains: vec![],
             constraints: vec![],
         }
     }
 
-    /// Add a new variable to the problem.
+    /// Add a new real variable to the problem.
     ///
     /// `obj_coeff` is a coefficient of the term in the objective function corresponding to this
     /// variable, `min` and `max` are the minimum and maximum (inclusive) bounds of this
     /// variable. If one of the bounds is absent, use `f64::NEG_INFINITY` for minimum and
     /// `f64::INFINITY` for maximum.
     pub fn add_var(&mut self, obj_coeff: f64, (min, max): (f64, f64)) -> Variable {
+        self.internal_add_var(obj_coeff, (min, max), VarDomain::Real)
+    }
+
+    /// Add a new integer variable to the problem.
+    ///
+    /// `obj_coeff` is a coefficient of the term in the objective function corresponding to this
+    /// variable, `min` and `max` are the minimum and maximum (inclusive) bounds of this
+    /// variable. If one of the bounds is absent, use `f64::NEG_INFINITY` for minimum and
+    /// `f64::INFINITY` for maximum.
+    pub fn add_integer_var(&mut self, obj_coeff: f64, (min, max): (i32, i32)) -> Variable {
+        self.internal_add_var(obj_coeff, (min as f64, max as f64), VarDomain::Integer)
+    }
+
+    /// Check if the problem has any integer variables.
+    pub fn has_integer_vars(&self) -> bool {
+        self.var_domains.iter().any(|v| *v == VarDomain::Integer)
+    }
+
+    /// Add a new binary variable to the problem.
+    ///
+    /// `obj_coeff` is a coefficient of the term in the objective function corresponding to this variable.
+    pub fn add_binary_var(&mut self, obj_coeff: f64) -> Variable {
+        self.internal_add_var(obj_coeff, (0.0, 1.0), VarDomain::Integer)
+    }
+
+    pub(crate) fn internal_add_var(
+        &mut self,
+        obj_coeff: f64,
+        (min, max): (f64, f64),
+        var_type: VarDomain,
+    ) -> Variable {
         let var = Variable(self.obj_coeffs.len());
         let obj_coeff = match self.direction {
             OptimizationDirection::Minimize => obj_coeff,
@@ -249,6 +291,7 @@ impl Problem {
         self.obj_coeffs.push(obj_coeff);
         self.var_mins.push(min);
         self.var_maxs.push(max);
+        self.var_domains.push(var_type);
         var
     }
 
@@ -304,13 +347,30 @@ impl Problem {
             &self.var_mins,
             &self.var_maxs,
             &self.constraints,
+            &self.var_domains,
         )?;
         solver.initial_solve()?;
-        Ok(Solution {
-            num_vars: self.obj_coeffs.len(),
-            direction: self.direction,
-            solver,
-        })
+
+        if self.has_integer_vars() {
+            let non_integer_solution = Solution {
+                num_vars: self.obj_coeffs.len(),
+                direction: self.direction,
+                solver: solver.clone(),
+            };
+            solver.solve_integer(non_integer_solution, self.direction)?;
+            let solution = Solution {
+                num_vars: self.obj_coeffs.len(),
+                direction: self.direction,
+                solver,
+            };
+            Ok(solution)
+        } else {
+            Ok(Solution {
+                num_vars: self.obj_coeffs.len(),
+                direction: self.direction,
+                solver,
+            })
+        }
     }
 }
 
@@ -351,12 +411,34 @@ impl Solution {
     /// Value of the variable at optimum.
     ///
     /// Note that you can use indexing operations to get variable values.
+    /// # Warning
+    /// If the variable is an integer, there might be rounding errors.
+    /// For example you could see 0.999999999999 instead of 1.0.
     pub fn var_value(&self, var: Variable) -> &f64 {
         assert!(var.0 < self.num_vars);
         self.solver.get_value(var.0)
     }
 
+    /// Value of the variable at optimum.
+    ///
+    /// If the variable was defined as an integer, it rounds
+    /// it remove precision errors
+    pub fn var_value_rounded(&self, var: Variable) -> f64 {
+        let val = self.var_value(var);
+        if self.solver.orig_var_domains[var.0] == VarDomain::Integer {
+            let rounded = val.round();
+            assert_eq!(rounded - val.floor(), 0.0);
+            rounded
+        } else {
+            *val
+        }
+    }
+
     /// Iterate over the variable-value pairs of the solution.
+    ///
+    /// # Warning
+    /// If you used integer variables, there might be rounding errors in the variable results
+    /// for example you could see 0.999999999999 instead of 1.0.
     pub fn iter(&self) -> SolutionIter {
         SolutionIter {
             solution: self,
@@ -483,8 +565,8 @@ mod tests {
         let mut problem = Problem::new(OptimizationDirection::Maximize);
         let v1 = problem.add_var(3.0, (12.0, f64::INFINITY));
         let v2 = problem.add_var(4.0, (5.0, f64::INFINITY));
-        problem.add_constraint(&[(v1, 1.0), (v2, 1.0)], ComparisonOp::Le, 20.0);
-        problem.add_constraint(&[(v2, -4.0), (v1, 1.0)], ComparisonOp::Ge, -20.0);
+        problem.add_constraint([(v1, 1.0), (v2, 1.0)], ComparisonOp::Le, 20.0);
+        problem.add_constraint([(v2, -4.0), (v1, 1.0)], ComparisonOp::Ge, -20.0);
 
         let sol = problem.solve().unwrap();
         assert_eq!(sol[v1], 12.0);
@@ -541,9 +623,9 @@ mod tests {
         let mut problem = Problem::new(OptimizationDirection::Maximize);
         let v1 = problem.add_var(1.0, (0.0, f64::INFINITY));
         let v2 = problem.add_var(2.0, (f64::NEG_INFINITY, f64::INFINITY));
-        problem.add_constraint(&[(v1, 1.0), (v2, 1.0)], ComparisonOp::Le, 4.0);
-        problem.add_constraint(&[(v1, 1.0), (v2, 1.0)], ComparisonOp::Ge, 2.0);
-        problem.add_constraint(&[(v1, 1.0), (v2, -1.0)], ComparisonOp::Ge, 0.0);
+        problem.add_constraint([(v1, 1.0), (v2, 1.0)], ComparisonOp::Le, 4.0);
+        problem.add_constraint([(v1, 1.0), (v2, 1.0)], ComparisonOp::Ge, 2.0);
+        problem.add_constraint([(v1, 1.0), (v2, -1.0)], ComparisonOp::Ge, 0.0);
 
         let sol = problem.solve().unwrap();
         assert_eq!(sol[v1], 2.0);
@@ -556,8 +638,8 @@ mod tests {
         let mut problem = Problem::new(OptimizationDirection::Maximize);
         let v1 = problem.add_var(1.0, (0.0, 3.0));
         let v2 = problem.add_var(2.0, (0.0, 3.0));
-        problem.add_constraint(&[(v1, 1.0), (v2, 1.0)], ComparisonOp::Le, 4.0);
-        problem.add_constraint(&[(v1, 1.0), (v2, 1.0)], ComparisonOp::Ge, 1.0);
+        problem.add_constraint([(v1, 1.0), (v2, 1.0)], ComparisonOp::Le, 4.0);
+        problem.add_constraint([(v1, 1.0), (v2, 1.0)], ComparisonOp::Ge, 1.0);
 
         let orig_sol = problem.solve().unwrap();
 
@@ -591,15 +673,15 @@ mod tests {
         let mut problem = Problem::new(OptimizationDirection::Minimize);
         let v1 = problem.add_var(2.0, (0.0, f64::INFINITY));
         let v2 = problem.add_var(1.0, (0.0, f64::INFINITY));
-        problem.add_constraint(&[(v1, 1.0), (v2, 1.0)], ComparisonOp::Le, 4.0);
-        problem.add_constraint(&[(v1, 1.0), (v2, 1.0)], ComparisonOp::Ge, 2.0);
+        problem.add_constraint([(v1, 1.0), (v2, 1.0)], ComparisonOp::Le, 4.0);
+        problem.add_constraint([(v1, 1.0), (v2, 1.0)], ComparisonOp::Ge, 2.0);
 
         let orig_sol = problem.solve().unwrap();
 
         {
             let sol = orig_sol
                 .clone()
-                .add_constraint(&[(v1, -1.0), (v2, 1.0)], ComparisonOp::Le, 0.0)
+                .add_constraint([(v1, -1.0), (v2, 1.0)], ComparisonOp::Le, 0.0)
                 .unwrap();
 
             assert_eq!(sol[v1], 1.0);
@@ -612,7 +694,7 @@ mod tests {
                 .clone()
                 .fix_var(v2, 1.5)
                 .unwrap()
-                .add_constraint(&[(v1, -1.0), (v2, 1.0)], ComparisonOp::Le, 0.0)
+                .add_constraint([(v1, -1.0), (v2, 1.0)], ComparisonOp::Le, 0.0)
                 .unwrap();
             assert_eq!(sol[v1], 1.5);
             assert_eq!(sol[v2], 1.5);
@@ -622,7 +704,7 @@ mod tests {
         {
             let sol = orig_sol
                 .clone()
-                .add_constraint(&[(v1, -1.0), (v2, 1.0)], ComparisonOp::Ge, 3.0)
+                .add_constraint([(v1, -1.0), (v2, 1.0)], ComparisonOp::Ge, 3.0)
                 .unwrap();
 
             assert_eq!(sol[v1], 0.0);
@@ -636,8 +718,8 @@ mod tests {
         let mut problem = Problem::new(OptimizationDirection::Minimize);
         let v1 = problem.add_var(0.0, (0.0, f64::INFINITY));
         let v2 = problem.add_var(-1.0, (0.0, f64::INFINITY));
-        problem.add_constraint(&[(v1, 3.0), (v2, 2.0)], ComparisonOp::Le, 6.0);
-        problem.add_constraint(&[(v1, -3.0), (v2, 2.0)], ComparisonOp::Le, 0.0);
+        problem.add_constraint([(v1, 3.0), (v2, 2.0)], ComparisonOp::Le, 6.0);
+        problem.add_constraint([(v1, -3.0), (v2, 2.0)], ComparisonOp::Le, 0.0);
 
         let mut sol = problem.solve().unwrap();
         assert_eq!(sol[v1], 1.0);
@@ -653,5 +735,102 @@ mod tests {
         assert!(f64::abs(sol[v1] - 1.0) < 1e-8);
         assert_eq!(sol[v2], 1.0);
         assert_eq!(sol.objective(), -1.0);
+    }
+
+    fn cast_result_to_integers(vec: Vec<f64>) -> Vec<i64> {
+        vec.into_iter()
+            .map(|x| {
+                let val = x.round() as i64;
+                assert!(f64::abs(x - val as f64) < 1e-5);
+                val
+            })
+            .collect()
+    }
+
+    #[test]
+    fn knapsack_solve() {
+        let mut problem = Problem::new(OptimizationDirection::Maximize);
+        let weights = [10, 60, 30, 40, 30, 20, 20, 2];
+        let values = [1, 10, 15, 40, 60, 90, 100, 15];
+        let capacity = 102;
+        let mut vars = vec![];
+        for i in 0..weights.len() {
+            let var = problem.add_binary_var(values[i] as f64);
+            vars.push(var);
+        }
+        let entries = vars
+            .iter()
+            .map(|v| (*v, weights[v.0] as f64))
+            .collect::<Vec<_>>();
+        problem.add_constraint(&entries, ComparisonOp::Le, capacity as f64);
+        let sol = problem.solve().unwrap();
+        let values = vars.iter().map(|v| sol[*v]).collect::<Vec<_>>();
+        assert_eq!(
+            cast_result_to_integers(values),
+            vec![0, 0, 1, 0, 1, 1, 1, 1]
+        );
+        assert_eq!(sol.objective(), 280.0);
+    }
+
+    #[test]
+    fn dominating_set_solve() {
+        let mut problem = Problem::new(OptimizationDirection::Minimize);
+        let vars = [
+            problem.add_binary_var(1.0),
+            problem.add_binary_var(1.0),
+            problem.add_binary_var(1.0),
+            problem.add_binary_var(1.0),
+            problem.add_binary_var(1.0),
+            problem.add_binary_var(1.0),
+        ];
+        let rows = vec![
+            vec![1, 1, 0, 1, 1, 0],
+            vec![1, 1, 1, 1, 0, 0],
+            vec![0, 1, 1, 1, 0, 0],
+            vec![1, 1, 1, 1, 0, 0],
+            vec![1, 0, 0, 0, 1, 0],
+            vec![1, 0, 0, 0, 0, 1],
+        ];
+        for row in rows {
+            problem.add_constraint(
+                row.iter()
+                    .enumerate()
+                    .map(|(i, v)| (vars[i], *v as f64))
+                    .collect::<Vec<_>>(),
+                ComparisonOp::Ge,
+                1.0,
+            );
+        }
+        let sol = problem.solve().unwrap();
+        let values = vars.iter().map(|v| sol[*v]).collect::<Vec<_>>();
+        assert_eq!(cast_result_to_integers(values), vec![1, 0, 1, 0, 0, 0]);
+        assert_eq!(sol.objective(), 2.0);
+    }
+
+    #[test]
+    fn solve_milp() {
+        let mut problem = Problem::new(OptimizationDirection::Maximize);
+
+        // Define variables with their objective coefficients
+        let x = problem.add_var(50.0, (2.0, f64::INFINITY)); // x ≥ 0
+        let y = problem.add_var(40.0, (0.0, 7.0)); // y ≥ 0
+        let z = problem.add_integer_var(45.0, (0, i32::MAX)); // z ≥ 0 and integer
+                                                              // Machine time constraint: 3x + 2y + z ≤ 20
+        problem.add_constraint(&[(x, 3.0), (y, 2.0), (z, 1.0)], ComparisonOp::Le, 20.0);
+
+        // Labor time constraint: 2x + y + 3z ≤ 15
+        problem.add_constraint(&[(x, 2.0), (y, 1.0), (z, 3.0)], ComparisonOp::Le, 15.0);
+
+        let sol = problem.solve().unwrap();
+
+        assert_eq!(
+            [
+                sol.var_value_rounded(x),
+                sol.var_value_rounded(y),
+                sol.var_value_rounded(z)
+            ],
+            [2.0, 6.5, 1.0]
+        );
+        assert_eq!(sol.objective(), 405.0);
     }
 }

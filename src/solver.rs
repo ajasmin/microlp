@@ -1,8 +1,10 @@
+use core::panic;
+
 use crate::{
     helpers::{resized_view, to_dense},
     lu::{lu_factorize, LUFactors, ScratchSpace},
     sparse::{ScatteredVec, SparseMat, SparseVec},
-    ComparisonOp, CsVec, Error,
+    ComparisonOp, CsVec, Error, OptimizationDirection, Solution, VarDomain, Variable,
 };
 
 use sprs::CompressedStorage;
@@ -11,6 +13,16 @@ type CsMat = sprs::CsMatI<f64, usize>;
 
 const EPS: f64 = 1e-8;
 
+
+fn float_eq(a: f64, b: f64) -> bool {
+    (a - b).abs() < EPS
+}
+fn float_ne(a: f64, b: f64) -> bool {
+    !float_eq(a, b)
+}
+
+
+
 #[derive(Clone)]
 pub(crate) struct Solver {
     pub(crate) num_vars: usize,
@@ -18,6 +30,7 @@ pub(crate) struct Solver {
     orig_obj_coeffs: Vec<f64>,
     orig_var_mins: Vec<f64>,
     orig_var_maxs: Vec<f64>,
+    pub(crate) orig_var_domains: Vec<VarDomain>,
     orig_constraints: CsMat, // excluding rhs
     orig_constraints_csc: CsMat,
     orig_rhs: Vec<f64>,
@@ -71,37 +84,41 @@ struct NonBasicVarState {
 
 impl std::fmt::Debug for Solver {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Solver\n")?;
-        write!(
+        writeln!(f, "Solver")?;
+        writeln!(
             f,
-            "num_vars: {}, num_constraints: {}, is_primal_feasible: {}, is_dual_feasible: {}\n",
+            "num_vars: {}, num_constraints: {}, is_primal_feasible: {}, is_dual_feasible: {}",
             self.num_vars,
             self.num_constraints(),
             self.is_primal_feasible,
             self.is_dual_feasible,
         )?;
-        write!(f, "orig_obj_coeffs:\n{:?}\n", self.orig_obj_coeffs)?;
-        write!(f, "orig_var_mins:\n{:?}\n", self.orig_var_mins)?;
-        write!(f, "orig_var_maxs:\n{:?}\n", self.orig_var_maxs)?;
-        write!(f, "orig_constraints:\n")?;
+        writeln!(f, "orig_obj_coeffs:\n{:?}", self.orig_obj_coeffs)?;
+        writeln!(f, "orig_var_mins:\n{:?}", self.orig_var_mins)?;
+        writeln!(f, "orig_var_maxs:\n{:?}", self.orig_var_maxs)?;
+        writeln!(f, "orig_constraints:")?;
         for row in self.orig_constraints.outer_iterator() {
-            write!(f, "{:?}\n", to_dense(&row))?;
+            writeln!(f, "{:?}", to_dense(&row))?;
         }
-        write!(f, "orig_rhs:\n{:?}\n", self.orig_rhs)?;
-        write!(f, "basic_vars:\n{:?}\n", self.basic_vars)?;
-        write!(f, "basic_var_vals:\n{:?}\n", self.basic_var_vals)?;
-        write!(f, "dual_edge_sq_norms:\n{:?}\n", self.dual_edge_sq_norms)?;
-        write!(f, "nb_vars:\n{:?}\n", self.nb_vars)?;
-        write!(f, "nb_var_vals:\n{:?}\n", self.nb_var_vals)?;
-        write!(f, "nb_var_obj_coeffs:\n{:?}\n", self.nb_var_obj_coeffs)?;
-        write!(
-            f,
-            "primal_edge_sq_norms:\n{:?}\n",
-            self.primal_edge_sq_norms
-        )?;
-        write!(f, "cur_obj_val: {:?}\n", self.cur_obj_val)?;
+        writeln!(f, "orig_rhs:\n{:?}", self.orig_rhs)?;
+        writeln!(f, "basic_vars:\n{:?}", self.basic_vars)?;
+        writeln!(f, "basic_var_vals:\n{:?}", self.basic_var_vals)?;
+        writeln!(f, "dual_edge_sq_norms:\n{:?}", self.dual_edge_sq_norms)?;
+        writeln!(f, "nb_vars:\n{:?}", self.nb_vars)?;
+        writeln!(f, "nb_var_vals:\n{:?}", self.nb_var_vals)?;
+        writeln!(f, "nb_var_obj_coeffs:\n{:?}", self.nb_var_obj_coeffs)?;
+        writeln!(f, "primal_edge_sq_norms:\n{:?}", self.primal_edge_sq_norms)?;
+        writeln!(f, "cur_obj_val: {:?}", self.cur_obj_val)?;
         Ok(())
     }
+}
+
+#[derive(Clone, Debug)]
+struct Step {
+    start_solution: Solution,
+    var: Variable,
+    start_val: i64,
+    cur_val: Option<i64>,
 }
 
 impl Solver {
@@ -110,6 +127,7 @@ impl Solver {
         var_mins: &[f64],
         var_maxs: &[f64],
         constraints: &[(CsVec, ComparisonOp, f64)],
+        var_domains: &[VarDomain],
     ) -> Result<Self, Error> {
         let enable_steepest_edge = true; // TODO: make user-settable.
 
@@ -144,12 +162,12 @@ impl Solver {
             nb_vars.push(v);
 
             // Try to choose values to achieve dual feasibility.
-            let init_val = if min == max {
+            let init_val = if float_eq(min, max) {
                 // Fixed variable, the obj. coeff doesn't matter.
                 min
             } else if min.is_infinite() && max.is_infinite() {
                 // Free variable, if we are lucky and obj. coeff is zero, then dual-feasible.
-                if obj_coeffs[v] != 0.0 {
+                if float_ne(obj_coeffs[v], 0.0) { //TODO should this use float_eq?
                     is_dual_feasible = false;
                 }
                 0.0
@@ -181,8 +199,8 @@ impl Solver {
             obj_val += init_val * obj_coeffs[v];
 
             nb_var_states.push(NonBasicVarState {
-                at_min: init_val == min,
-                at_max: init_val == max,
+                at_min: float_eq(init_val, min),
+                at_max: float_eq(init_val, max),
             });
         }
 
@@ -200,7 +218,7 @@ impl Solver {
 
             if coeffs.indices().is_empty() {
                 let is_tautological = match cmp_op {
-                    ComparisonOp::Eq => 0.0 == rhs,
+                    ComparisonOp::Eq => float_eq(rhs, 0.0),
                     ComparisonOp::Le => 0.0 <= rhs,
                     ComparisonOp::Ge => 0.0 >= rhs,
                 };
@@ -326,6 +344,7 @@ impl Solver {
             orig_constraints,
             orig_constraints_csc,
             orig_rhs,
+            orig_var_domains: var_domains.to_vec(),
             enable_primal_steepest_edge,
             enable_dual_steepest_edge,
             is_primal_feasible,
@@ -423,8 +442,8 @@ impl Solver {
 
             let cur_val = self.nb_var_vals[col];
             self.nb_var_states[col] = NonBasicVarState {
-                at_min: cur_val == self.orig_var_mins[var],
-                at_max: cur_val == self.orig_var_maxs[var],
+                at_min: float_eq(cur_val, self.orig_var_mins[var]),
+                at_max: float_eq(cur_val, self.orig_var_maxs[var]),
             };
 
             // Shouldn't result in error, presumably problem was solvable before this variable
@@ -482,6 +501,95 @@ impl Solver {
         self.enable_primal_steepest_edge = false;
 
         Ok(())
+    }
+
+    pub(crate) fn solve_integer(
+        &mut self,
+        cur_solution: Solution,
+        direction: OptimizationDirection,
+    ) -> Result<(), Error> {
+        let mut best_cost = if direction == OptimizationDirection::Maximize {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        };
+        let mut best_solution = None;
+        debug!("{:?}", cur_solution.iter().collect::<Vec<_>>());
+        let mut dfs_stack =
+            if let Some(var) = choose_branch_var(&cur_solution, &self.orig_var_domains) {
+                debug!(
+                    "starting branch&bound, current obj. value: {:.2}",
+                    self.cur_obj_val
+                );
+                vec![new_step(cur_solution, var)]
+            } else {
+                debug!(
+                    "found optimal solution with initial relaxation! cost: {:.2}",
+                    self.cur_obj_val
+                );
+                return Ok(());
+            };
+
+        for iter in 0.. {
+            let cur_step = dfs_stack.last_mut().unwrap();
+
+            // Choose next value for current variable
+            if let Some(ref mut val) = cur_step.cur_val {
+                if *val == cur_step.start_val {
+                    *val = 1 - *val;
+                } else {
+                    // Explored all values, backtrack
+                    dfs_stack.pop();
+                    if dfs_stack.is_empty() {
+                        break;
+                    } else {
+                        continue;
+                    }
+                }
+            } else {
+                cur_step.cur_val = Some(cur_step.start_val);
+            }
+
+            let mut cur_solution = cur_step.start_solution.clone();
+            if let Ok(new_solution) =
+                cur_solution.fix_var(cur_step.var, cur_step.cur_val.unwrap() as f64)
+            {
+                cur_solution = new_solution;
+            } else {
+                // No feasible solution with current constraints
+                continue;
+            }
+
+            let obj_val = cur_solution.objective();
+            if !is_solution_better(direction, best_cost, obj_val) {
+                // Branch is worse than best solution
+                continue;
+            }
+
+            if let Some(var) = choose_branch_var(&cur_solution, &self.orig_var_domains) {
+                // Search deeper
+                dfs_stack.push(new_step(cur_solution, var));
+            } else {
+                // Found integral solution
+                if is_solution_better(direction, best_cost, obj_val) {
+                    debug!(
+                        "iter {} (search depth {}): found new best solution, cost: {:.2}",
+                        iter,
+                        dfs_stack.len(),
+                        obj_val
+                    );
+                    best_cost = obj_val;
+                    best_solution = Some(cur_solution);
+                }
+            }
+        }
+
+        if let Some(solution) = best_solution {
+            *self = solution.solver;
+            Ok(())
+        } else {
+            Err(Error::Infeasible)
+        }
     }
 
     fn optimize(&mut self) -> Result<(), Error> {
@@ -557,7 +665,7 @@ impl Solver {
 
         if coeffs.indices().is_empty() {
             let is_tautological = match cmp_op {
-                ComparisonOp::Eq => 0.0 == rhs,
+                ComparisonOp::Eq => float_eq(rhs, 0.0),
                 ComparisonOp::Le => 0.0 <= rhs,
                 ComparisonOp::Ge => 0.0 >= rhs,
             };
@@ -659,7 +767,7 @@ impl Solver {
         let mut num_vars = 0;
         let mut infeasibility = 0.0;
         for (&obj_coeff, var_state) in self.nb_var_obj_coeffs.iter().zip(&self.nb_var_states) {
-            if !(var_state.at_min && obj_coeff > -EPS) && !(var_state.at_max && obj_coeff < EPS) {
+            if !(var_state.at_min && obj_coeff > -EPS || var_state.at_max && obj_coeff < EPS) {
                 num_vars += 1;
                 infeasibility += obj_coeff.abs();
             }
@@ -1036,8 +1144,8 @@ impl Solver {
                 self.basic_var_vals[r] -= pivot_info.entering_diff * coeff;
             }
             let var_state = &mut self.nb_var_states[pivot_info.col];
-            var_state.at_min = pivot_info.entering_new_val == self.orig_var_mins[entering_var];
-            var_state.at_max = pivot_info.entering_new_val == self.orig_var_maxs[entering_var];
+            var_state.at_min = float_eq(pivot_info.entering_new_val, self.orig_var_mins[entering_var]);
+            var_state.at_max = float_eq(pivot_info.entering_new_val, self.orig_var_maxs[entering_var]);
             return;
         }
 
@@ -1067,8 +1175,8 @@ impl Solver {
 
         self.nb_var_vals[pivot_info.col] = pivot_elem.leaving_new_val;
         let leaving_var_state = &mut self.nb_var_states[pivot_info.col];
-        leaving_var_state.at_min = pivot_elem.leaving_new_val == self.orig_var_mins[leaving_var];
-        leaving_var_state.at_max = pivot_elem.leaving_new_val == self.orig_var_maxs[leaving_var];
+        leaving_var_state.at_min = float_eq(pivot_elem.leaving_new_val, self.orig_var_mins[leaving_var]);
+        leaving_var_state.at_max = float_eq(pivot_elem.leaving_new_val, self.orig_var_maxs[leaving_var]);
 
         let pivot_obj = self.nb_var_obj_coeffs[pivot_info.col] / pivot_coeff;
         for (c, &coeff) in self.row_coeffs.iter() {
@@ -1383,6 +1491,39 @@ fn into_resized(vec: CsVec, len: usize) -> CsVec {
     CsVec::new(len, indices, data)
 }
 
+fn choose_branch_var(cur_solution: &Solution, domain: &[VarDomain]) -> Option<Variable> {
+    let mut max_divergence = 0.0;
+    let mut max_var = None;
+    for (var, &val) in cur_solution {
+        if domain[var.0] != VarDomain::Integer {
+            continue;
+        }
+        let divergence = f64::abs(val - val.round());
+        if divergence > 1e-5 && divergence > max_divergence {
+            max_divergence = divergence;
+            max_var = Some(var);
+        }
+    }
+    max_var
+}
+
+fn new_step(start_solution: Solution, var: Variable) -> Step {
+    let start_val = if start_solution[var] < 0.5 { 0 } else { 1 };
+    Step {
+        start_solution,
+        var,
+        start_val,
+        cur_val: None,
+    }
+}
+
+fn is_solution_better(direction: OptimizationDirection, best: f64, current: f64) -> bool {
+    match direction {
+        OptimizationDirection::Maximize => current > best,
+        OptimizationDirection::Minimize => current < best,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1400,6 +1541,7 @@ mod tests {
                 (to_sparse(&[1.0, 1.0]), ComparisonOp::Ge, 2.0),
                 (to_sparse(&[0.0, 1.0]), ComparisonOp::Eq, 3.0),
             ],
+            &[VarDomain::Real, VarDomain::Real],
         )
         .unwrap();
 
@@ -1450,6 +1592,7 @@ mod tests {
                 (to_sparse(&[1.0, 1.0]), ComparisonOp::Le, 20.0),
                 (to_sparse(&[-1.0, 4.0]), ComparisonOp::Le, 20.0),
             ],
+            &[VarDomain::Real, VarDomain::Real],
         )
         .unwrap();
         sol.initial_solve().unwrap();
@@ -1472,6 +1615,7 @@ mod tests {
                 (to_sparse(&[1.0, 1.0]), ComparisonOp::Ge, 10.0),
                 (to_sparse(&[1.0, 1.0]), ComparisonOp::Le, 5.0),
             ],
+            &[VarDomain::Real, VarDomain::Real],
         )
         .unwrap()
         .initial_solve();
