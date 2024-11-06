@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use crate::sparse::{Error, Perm, ScatteredVec, SparseMat, TriangleMat};
 
 #[derive(Clone)]
@@ -57,8 +59,8 @@ impl LUFactors {
         scratch.dense_rhs.resize(rhs.len(), 0.0);
 
         if let Some(row_perm) = &self.row_perm {
-            for i in 0..rhs.len() {
-                scratch.dense_rhs[row_perm.orig2new[i]] = rhs[i];
+            for (i, rhs_el) in rhs.iter().enumerate() {
+                scratch.dense_rhs[row_perm.orig2new[i]] = *rhs_el;
             }
         } else {
             scratch.dense_rhs.copy_from_slice(rhs);
@@ -72,7 +74,7 @@ impl LUFactors {
                 rhs[col_perm.new2orig[i]] = scratch.dense_rhs[i];
             }
         } else {
-            rhs.copy_from_slice(&mut scratch.dense_rhs);
+            rhs.copy_from_slice(&scratch.dense_rhs);
         }
     }
 
@@ -168,7 +170,7 @@ pub fn lu_factorize<'a>(
 
         scratch.mark_nonzero.run(
             &mut scratch.rhs,
-            |new_i| &lower.col_rows(new_i),
+            |new_i| lower.col_rows(new_i),
             |new_i| new_i < i_col,
             |orig_r| orig2new_row[orig_r],
         );
@@ -253,12 +255,10 @@ pub fn lu_factorize<'a>(
             }
 
             let new_r = orig2new_row[orig_r];
-            if new_r < i_col {
-                upper.push(new_r, val);
-            } else if new_r == i_col {
-                upper_diag.push(pivot_val);
-            } else {
-                lower.push(orig_r, val / pivot_val);
+            match new_r.cmp(&i_col) {
+                Ordering::Less => upper.push(new_r, val),
+                Ordering::Equal => upper_diag.push(pivot_val),
+                Ordering::Greater => lower.push(orig_r, val / pivot_val),
             }
         }
 
@@ -657,12 +657,6 @@ mod tests {
                 - &permuted;
             assert!(diff.norm(1.0) < 1e-5);
         }
-
-        type ArrayVec = ndarray::Array1<f64>;
-        let dense_rhs: Vec<_> = (0..size).map(|_| rng.gen_range(0.0..1.0)).collect();
-
-
-
 
         let sparse_rhs = {
             let mut res = CsVec::empty(size);

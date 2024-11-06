@@ -105,8 +105,8 @@ pub fn order_colamd<'a>(
             rows[i].end += prev_end;
         }
 
-        for c in 0..size {
-            for &r in cols[c].elems(&row_storage) {
+        for (c, col) in cols.iter().enumerate().take(size) {
+            for &r in col.elems(&row_storage) {
                 let row = &mut rows[r];
                 col_storage[row.begin] = c;
                 row.begin += 1;
@@ -134,8 +134,7 @@ pub fn order_colamd<'a>(
             // all columns on the stack are of size 1
             stack.clear();
             stack.push(c);
-            while !stack.is_empty() {
-                let c = stack.pop().unwrap();
+            while let Some(c) = stack.pop() {
                 let r = *cols[c]
                     .elems(&row_storage)
                     .iter()
@@ -420,7 +419,7 @@ impl ColsQueue {
         let col = loop {
             if self.min_score >= self.score2head.len() {
                 //TODO this branch is not hit
-                return None
+                return None;
             }
             if let Some(col) = self.score2head[self.min_score] {
                 break col;
@@ -490,7 +489,7 @@ pub fn find_diag_matching<'a>(
         });
 
         'dfs_loop: while !dfs_stack.is_empty() {
-            let mut cur_step = dfs_stack.last_mut().unwrap();
+            let cur_step = dfs_stack.last_mut().unwrap();
             let c = cur_step.col;
             let col_rows = get_col(c);
 
@@ -546,8 +545,10 @@ pub fn find_diag_matching<'a>(
 /// Lower block triangular form of a matrix.
 #[derive(Clone, Debug)]
 pub struct BlockDiagForm {
+    #[allow(unused)]
     /// Row permutation: for each original row its new row number so that diag is nonzero.
     pub row2col: Vec<usize>,
+    #[allow(unused)]
     /// For each block its set of columns (the order of blocks is lower block triangular)
     pub block_cols: Vec<Vec<usize>>,
 }
