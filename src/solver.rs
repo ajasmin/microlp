@@ -13,15 +13,12 @@ type CsMat = sprs::CsMatI<f64, usize>;
 
 const EPS: f64 = 1e-8;
 
-
 fn float_eq(a: f64, b: f64) -> bool {
     (a - b).abs() < EPS
 }
 fn float_ne(a: f64, b: f64) -> bool {
     !float_eq(a, b)
 }
-
-
 
 #[derive(Clone)]
 pub(crate) struct Solver {
@@ -167,7 +164,8 @@ impl Solver {
                 min
             } else if min.is_infinite() && max.is_infinite() {
                 // Free variable, if we are lucky and obj. coeff is zero, then dual-feasible.
-                if float_ne(obj_coeffs[v], 0.0) { //TODO should this use float_eq?
+                if float_ne(obj_coeffs[v], 0.0) {
+                    //TODO should this use float_eq?
                     is_dual_feasible = false;
                 }
                 0.0
@@ -1144,8 +1142,14 @@ impl Solver {
                 self.basic_var_vals[r] -= pivot_info.entering_diff * coeff;
             }
             let var_state = &mut self.nb_var_states[pivot_info.col];
-            var_state.at_min = float_eq(pivot_info.entering_new_val, self.orig_var_mins[entering_var]);
-            var_state.at_max = float_eq(pivot_info.entering_new_val, self.orig_var_maxs[entering_var]);
+            var_state.at_min = float_eq(
+                pivot_info.entering_new_val,
+                self.orig_var_mins[entering_var],
+            );
+            var_state.at_max = float_eq(
+                pivot_info.entering_new_val,
+                self.orig_var_maxs[entering_var],
+            );
             return;
         }
 
@@ -1175,8 +1179,10 @@ impl Solver {
 
         self.nb_var_vals[pivot_info.col] = pivot_elem.leaving_new_val;
         let leaving_var_state = &mut self.nb_var_states[pivot_info.col];
-        leaving_var_state.at_min = float_eq(pivot_elem.leaving_new_val, self.orig_var_mins[leaving_var]);
-        leaving_var_state.at_max = float_eq(pivot_elem.leaving_new_val, self.orig_var_maxs[leaving_var]);
+        leaving_var_state.at_min =
+            float_eq(pivot_elem.leaving_new_val, self.orig_var_mins[leaving_var]);
+        leaving_var_state.at_max =
+            float_eq(pivot_elem.leaving_new_val, self.orig_var_maxs[leaving_var]);
 
         let pivot_obj = self.nb_var_obj_coeffs[pivot_info.col] / pivot_coeff;
         for (c, &coeff) in self.row_coeffs.iter() {

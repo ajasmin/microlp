@@ -49,13 +49,13 @@ assert_eq!(solution[y], 3.0);
 #[macro_use]
 extern crate log;
 
+mod broken_tests;
 mod helpers;
 mod lu;
 mod mps;
 mod ordering;
 mod solver;
 mod sparse;
-mod broken_tests;
 
 use solver::Solver;
 use sprs::errors::StructureError;
