@@ -130,7 +130,7 @@ impl<'a> From<&'a (Variable, f64)> for LinearTerm {
     }
 }
 
-impl<I: IntoIterator<Item = impl Into<LinearTerm>>> From<I> for LinearExpr {
+impl<I: IntoIterator<Item=impl Into<LinearTerm>>> From<I> for LinearExpr {
     fn from(iter: I) -> Self {
         let mut expr = LinearExpr::empty();
         for term in iter {
@@ -142,7 +142,7 @@ impl<I: IntoIterator<Item = impl Into<LinearTerm>>> From<I> for LinearExpr {
 }
 
 impl std::iter::FromIterator<(Variable, f64)> for LinearExpr {
-    fn from_iter<I: IntoIterator<Item = (Variable, f64)>>(iter: I) -> Self {
+    fn from_iter<I: IntoIterator<Item=(Variable, f64)>>(iter: I) -> Self {
         let mut expr = LinearExpr::empty();
         for term in iter {
             expr.add(term.0, term.1)
@@ -152,7 +152,7 @@ impl std::iter::FromIterator<(Variable, f64)> for LinearExpr {
 }
 
 impl std::iter::Extend<(Variable, f64)> for LinearExpr {
-    fn extend<I: IntoIterator<Item = (Variable, f64)>>(&mut self, iter: I) {
+    fn extend<I: IntoIterator<Item=(Variable, f64)>>(&mut self, iter: I) {
         for term in iter {
             self.add(term.0, term.1)
         }
@@ -427,7 +427,7 @@ impl Solution {
         let val = self.var_value(var);
         if self.solver.orig_var_domains[var.0] == VarDomain::Integer {
             let rounded = val.round();
-            assert_eq!(rounded - val.floor(), 0.0);
+            assert!(f64::abs(rounded - val) < 1e-5, "Variable was expected to be an integer, got {}", val);
             rounded
         } else {
             *val
@@ -764,7 +764,8 @@ mod tests {
             .collect::<Vec<_>>();
         problem.add_constraint(&entries, ComparisonOp::Le, capacity as f64);
         let sol = problem.solve().unwrap();
-        let values = vars.iter().map(|v| sol[*v]).collect::<Vec<_>>();
+
+        let values = vars.iter().map(|v| sol.var_value_rounded(*v)).collect::<Vec<_>>();
         assert_eq!(
             cast_result_to_integers(values),
             vec![0, 0, 1, 0, 1, 1, 1, 1]
@@ -802,7 +803,7 @@ mod tests {
             );
         }
         let sol = problem.solve().unwrap();
-        let values = vars.iter().map(|v| sol[*v]).collect::<Vec<_>>();
+        let values = vars.iter().map(|v| sol.var_value_rounded(*v)).collect::<Vec<_>>();
         assert_eq!(cast_result_to_integers(values), vec![1, 0, 1, 0, 0, 0]);
         assert_eq!(sol.objective(), 2.0);
     }
@@ -815,7 +816,7 @@ mod tests {
         let x = problem.add_var(50.0, (2.0, f64::INFINITY)); // x ≥ 0
         let y = problem.add_var(40.0, (0.0, 7.0)); // y ≥ 0
         let z = problem.add_integer_var(45.0, (0, i32::MAX)); // z ≥ 0 and integer
-                                                              // Machine time constraint: 3x + 2y + z ≤ 20
+        // Machine time constraint: 3x + 2y + z ≤ 20
         problem.add_constraint(&[(x, 3.0), (y, 2.0), (z, 1.0)], ComparisonOp::Le, 20.0);
 
         // Labor time constraint: 2x + y + 3z ≤ 15
