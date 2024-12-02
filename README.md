@@ -1,9 +1,5 @@
 # microlp
-This is a fork of [minilp](https://github.com/ztlpn/minilp) which i initially made to fix some runtime errors.
-I'm no expert of optimization, if you have any suggestions or improvements feel free to open an issue or a pull request.
-
-## Warning
-currently panics in rust nightly 1.83.0 and 1.84.0 [see here](https://github.com/sparsemat/sprs/issues/370)
+This is a fork of the archived [minilp](https://github.com/ztlpn/minilp) crate, which was made to fix some bugs, add features and allow the community to make issues and PRs.
 
 [![Crates.io](https://img.shields.io/crates/v/microlp.svg)](https://crates.io/crates/microlp)
 [![Documentation](https://docs.rs/microlp/badge.svg)](https://docs.rs/microlp/)
@@ -11,7 +7,7 @@ currently panics in rust nightly 1.83.0 and 1.84.0 [see here](https://github.com
 A fast linear programming solver library.
 
 [Linear programming](https://en.wikipedia.org/wiki/Linear_programming) is a technique for
-finding the minimum (or maximum) of a linear function of a set of continuous variables
+finding the minimum (or maximum) of a linear function of a set of variables
 subject to linear equality and inequality constraints.
 
 ## Features
@@ -21,10 +17,12 @@ subject to linear equality and inequality constraints.
 * Incremental: add constraints to an existing solution without solving it from scratch.
 * Problems can be defined via an API or parsed from an
   [MPS](https://en.wikipedia.org/wiki/MPS_(format)) file.
+* Allows for continuous, integer and boolean variables
 
 Warning: this is an early-stage project. Although the library is already quite powerful and fast,
 it will probably cycle, lose precision or panic on some harder problems. Please report
-bugs and contribute code!
+bugs and contribute code! 
+Models with integer or binary variables are solved using a simple branch & bound method.
 
 ## Examples
 
@@ -33,7 +31,7 @@ Basic usage
 ```rust
 use microlp::{Problem, OptimizationDirection, ComparisonOp};
 
-// Maximize an objective function x + 2 * y of two variables x >= 0 and 0 <= y <= 3
+// Maximize an objective function x + 2 * y of two continuous variables x >= 0 and 0 <= y <= 3
 let mut problem = Problem::new(OptimizationDirection::Maximize);
 let x = problem.add_var(1.0, (0.0, f64::INFINITY));
 let y = problem.add_var(2.0, (0.0, 3.0));
