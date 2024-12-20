@@ -34,6 +34,7 @@ impl SparseVec {
     }
 
     pub(crate) fn into_csvec(self, len: usize) -> CsVec<f64> {
+        //guaranteed to not panic
         CsVec::new_from_unsorted(len, self.indices, self.values).unwrap()
     }
 }
@@ -131,6 +132,7 @@ impl ScatteredVec {
                 data.push(val);
             }
         }
+        //guaranteed to be sorted, in range and with same size
         CsVec::new_from_unsorted(self.values.len(), indices, data).unwrap()
     }
 }
@@ -263,6 +265,7 @@ impl SparseMat {
             }
         }
 
+        //guaranteed to have at least one element
         *out.indptr.last_mut().unwrap() = self.nnz();
 
         out

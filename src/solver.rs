@@ -6,7 +6,6 @@ use crate::{
     sparse::{ScatteredVec, SparseMat, SparseVec},
     ComparisonOp, CsVec, Error, OptimizationDirection, Solution, VarDomain, Variable,
 };
-
 use sprs::CompressedStorage;
 
 type CsMat = sprs::CsMatI<f64, usize>;
@@ -295,6 +294,7 @@ impl Solver {
         let mut nb_var_obj_coeffs = vec![];
         let mut primal_edge_sq_norms = vec![];
         for (&var, state) in nb_vars.iter().zip(&nb_var_states) {
+            //guaranteed to be a valid index
             let col = orig_constraints_csc.outer_view(var).unwrap();
 
             if need_artificial_obj {
@@ -323,13 +323,16 @@ impl Solver {
             |c| {
                 orig_constraints_csc
                     .outer_view(basic_vars[c])
+                    //guaranteed to be a valid index
                     .unwrap()
                     .into_raw_storage()
             },
             0.1,
             &mut scratch,
         )
-        .unwrap();
+        .map_err(|e| match e {
+            crate::sparse::Error::SingularMatrix => Error::SingularMatrix,
+        })?;
         let lu_factors_transp = lu_factors.transpose();
 
         let nb_var_is_fixed = vec![false; nb_vars.len()];
@@ -403,7 +406,7 @@ impl Solver {
                 self.calc_row_coeffs(row);
                 let pivot_info = self.choose_entering_col_dual(row, val)?;
                 self.calc_col_coeffs(pivot_info.col);
-                self.pivot(&pivot_info);
+                self.pivot(&pivot_info)?;
                 pivot_info.col
             }
 
@@ -447,6 +450,7 @@ impl Solver {
             // Shouldn't result in error, presumably problem was solvable before this variable
             // was fixed.
             self.is_dual_feasible = false;
+            //TODO check unwrap
             self.optimize().unwrap();
             true
         } else {
@@ -490,7 +494,7 @@ impl Solver {
         }
 
         if !self.is_dual_feasible {
-            self.recalc_obj_coeffs();
+            self.recalc_obj_coeffs()?;
             self.optimize()?;
         }
 
@@ -529,6 +533,7 @@ impl Solver {
             };
 
         for iter in 0.. {
+            //guaranteed to have at least one element
             let cur_step = dfs_stack.last_mut().unwrap();
 
             // Choose next value for current variable
@@ -550,6 +555,7 @@ impl Solver {
 
             let mut cur_solution = cur_step.start_solution.clone();
             if let Ok(new_solution) =
+                //guaranteed to exist as it's checked in the previous if let Some
                 cur_solution.fix_var(cur_step.var, cur_step.cur_val.unwrap() as f64)
             {
                 cur_solution = new_solution;
@@ -601,7 +607,7 @@ impl Solver {
             }
 
             if let Some(pivot_info) = self.choose_pivot()? {
-                self.pivot(&pivot_info);
+                self.pivot(&pivot_info)?;
             } else {
                 debug!(
                     "found optimum in {} iterations, obj.: {}",
@@ -636,7 +642,7 @@ impl Solver {
                 self.calc_row_coeffs(row);
                 let pivot_info = self.choose_entering_col_dual(row, leaving_new_val)?;
                 self.calc_col_coeffs(pivot_info.col);
-                self.pivot(&pivot_info);
+                self.pivot(&pivot_info)?;
             } else {
                 debug!(
                     "restored feasibility in {} iterations, {}: {}",
@@ -716,7 +722,7 @@ impl Solver {
         self.orig_constraints_csc = self.orig_constraints.to_csc();
 
         self.basis_solver
-            .reset(&self.orig_constraints_csc, &self.basic_vars);
+            .reset(&self.orig_constraints_csc, &self.basic_vars)?;
 
         if self.enable_primal_steepest_edge || self.enable_dual_steepest_edge {
             // existing tableau rows didn't change, so we calc the last row
@@ -776,6 +782,7 @@ impl Solver {
     /// Calculate current coeffs column for a single non-basic variable.
     fn calc_col_coeffs(&mut self, c_var: usize) {
         let var = self.nb_vars[c_var];
+        //guaranteed to be a valid index
         let orig_col = self.orig_constraints_csc.outer_view(var).unwrap();
         self.basis_solver
             .solve(orig_col.iter())
@@ -790,6 +797,7 @@ impl Solver {
 
         self.row_coeffs.clear_and_resize(self.nb_vars.len());
         for (r, &coeff) in self.inv_basis_row_coeffs.iter() {
+            //guaranteed to be a valid index
             for (v, &val) in self.orig_constraints.outer_view(r).unwrap().iter() {
                 if let VarState::NonBasic(idx) = self.var_states[v] {
                     *self.row_coeffs.get_mut(idx) += val * coeff;
@@ -1126,7 +1134,7 @@ impl Solver {
         }
     }
 
-    fn pivot(&mut self, pivot_info: &PivotInfo) {
+    fn pivot(&mut self, pivot_info: &PivotInfo) -> Result<(), Error> {
         // TODO: periodically (say, every 1000 pivots) recalc basic vars and object coeffs
         // from scratch for numerical stability.
 
@@ -1150,9 +1158,9 @@ impl Solver {
                 pivot_info.entering_new_val,
                 self.orig_var_maxs[entering_var],
             );
-            return;
+            return Ok(());
         }
-
+        //guaranteed, none variant already handled
         let pivot_elem = pivot_info.elem.as_ref().unwrap();
         let pivot_coeff = pivot_elem.coeff;
 
@@ -1213,8 +1221,9 @@ impl Solver {
                 .push_eta_matrix(&self.col_coeffs, pivot_elem.row, pivot_coeff);
         } else {
             self.basis_solver
-                .reset(&self.orig_constraints_csc, &self.basic_vars);
+                .reset(&self.orig_constraints_csc, &self.basic_vars)?;
         }
+        Ok(())
     }
 
     fn update_primal_sq_norms(&mut self, entering_col: usize, pivot_coeff: f64) {
@@ -1229,6 +1238,7 @@ impl Solver {
         // now tmp contains the v vector from the article.
 
         for &r in tmp.indices() {
+            //guaranteed to be a valid index
             for &v in self.orig_constraints.outer_view(r).unwrap().indices() {
                 if let VarState::NonBasic(idx) = self.var_states[v] {
                     self.sq_norms_update_helper[idx] = 0.0;
@@ -1238,6 +1248,7 @@ impl Solver {
         // now significant positions in sq_norms_update_helper are cleared.
 
         for (r, &coeff) in tmp.iter() {
+            //guaranteed to be a valid index
             for (v, &val) in self.orig_constraints.outer_view(r).unwrap().iter() {
                 if let VarState::NonBasic(idx) = self.var_states[v] {
                     self.sq_norms_update_helper[idx] += val * coeff;
@@ -1288,11 +1299,12 @@ impl Solver {
     }
 
     #[allow(dead_code)]
-    fn recalc_basic_var_vals(&mut self) {
+    fn recalc_basic_var_vals(&mut self) -> Result<(), Error> {
         let mut cur_vals = self.orig_rhs.clone();
         for (i, var) in self.nb_vars.iter().enumerate() {
             let val = self.nb_var_vals[i];
             if val != 0.0 {
+                //guaranteed to be a valid index
                 for (r, &coeff) in self.orig_constraints_csc.outer_view(*var).unwrap().iter() {
                     cur_vals[r] -= val * coeff;
                 }
@@ -1301,19 +1313,20 @@ impl Solver {
 
         if self.basis_solver.eta_matrices.len() > 0 {
             self.basis_solver
-                .reset(&self.orig_constraints_csc, &self.basic_vars);
+                .reset(&self.orig_constraints_csc, &self.basic_vars)?;
         }
 
         self.basis_solver
             .lu_factors
             .solve_dense(&mut cur_vals, &mut self.basis_solver.scratch);
         self.basic_var_vals = cur_vals;
+        Ok(())
     }
 
-    fn recalc_obj_coeffs(&mut self) {
+    fn recalc_obj_coeffs(&mut self) -> Result<(), Error> {
         if self.basis_solver.eta_matrices.len() > 0 {
             self.basis_solver
-                .reset(&self.orig_constraints_csc, &self.basic_vars);
+                .reset(&self.orig_constraints_csc, &self.basic_vars)?;
         }
 
         let multipliers = {
@@ -1329,6 +1342,7 @@ impl Solver {
 
         self.nb_var_obj_coeffs.clear();
         for &var in &self.nb_vars {
+            //guaranteed to be a valid index
             let col = self.orig_constraints_csc.outer_view(var).unwrap();
             let dot_prod: f64 = col.iter().map(|(r, val)| val * multipliers[r]).sum();
             self.nb_var_obj_coeffs
@@ -1342,12 +1356,14 @@ impl Solver {
         for (c, &var) in self.nb_vars.iter().enumerate() {
             self.cur_obj_val += self.orig_obj_coeffs[var] * self.nb_var_vals[c];
         }
+        Ok(())
     }
 
     #[allow(dead_code)]
     fn recalc_primal_sq_norms(&mut self) {
         self.primal_edge_sq_norms.clear();
         for &var in &self.nb_vars {
+            //guaranteed to be a valid index
             let col = self.orig_constraints_csc.outer_view(var).unwrap();
             let sq_norm = self.basis_solver.solve(col.iter()).sq_norm() + 1.0;
             self.primal_edge_sq_norms.push(sq_norm);
@@ -1397,7 +1413,7 @@ impl BasisSolver {
         self.eta_matrices.push(r_leaving, coeffs);
     }
 
-    fn reset(&mut self, orig_constraints_csc: &CsMat, basic_vars: &[usize]) {
+    fn reset(&mut self, orig_constraints_csc: &CsMat, basic_vars: &[usize]) -> Result<(), Error> {
         self.scratch.clear_sparse(basic_vars.len());
         self.eta_matrices.clear_and_resize(basic_vars.len());
         self.rhs.clear_and_resize(basic_vars.len());
@@ -1406,14 +1422,18 @@ impl BasisSolver {
             |c| {
                 orig_constraints_csc
                     .outer_view(basic_vars[c])
+                    //guaranteed to be a valid index
                     .unwrap()
                     .into_raw_storage()
             },
             0.1,
             &mut self.scratch,
         )
-        .unwrap(); // TODO: When is singular basis matrix possible? Report as a proper error.
+        .map_err(|e| match e {
+            crate::sparse::Error::SingularMatrix => Error::SingularMatrix,
+        })?;
         self.lu_factors_transp = self.lu_factors.transpose();
+        Ok(())
     }
 
     fn solve<'a>(&mut self, rhs: impl Iterator<Item = (usize, &'a f64)>) -> &ScatteredVec {

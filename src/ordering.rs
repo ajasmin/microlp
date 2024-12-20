@@ -8,9 +8,11 @@ pub fn order_simple<'a>(size: usize, get_col: impl Fn(usize) -> &'a [usize]) -> 
     }
 
     let mut new2orig = Vec::with_capacity(size);
-    //TODO bug here
+
+    //TODO should this be refactored?
     while new2orig.len() < size {
         let min = cols_queue.pop_min();
+        //guaranteed to exist
         new2orig.push(min.unwrap());
     }
 
@@ -139,6 +141,7 @@ pub fn order_colamd<'a>(
                     .elems(&row_storage)
                     .iter()
                     .find(|&&r| !is_absorbed_row[r])
+                    //guaranteed to exist, it is never non empty
                     .unwrap();
                 for &other_c in rows[r].elems(&col_storage) {
                     col_rows_len[other_c] -= 1;
@@ -213,6 +216,7 @@ pub fn order_colamd<'a>(
         // order dense columns at the end.
         let cols_queue_len = cols_queue.len();
         for i in 0..cols_queue_len {
+            //guaranteed to exist
             let dense_c = cols_queue.pop_min().unwrap();
             new2orig[size - cols_queue_len + i] = dense_c;
             is_ordered_col[dense_c] = true;
@@ -254,6 +258,7 @@ pub fn order_colamd<'a>(
     let mut num_mass_eliminated = 0;
 
     while cols_queue.len() > 0 {
+        //guaranteed to exist
         let pivot_c = cols_queue.pop_min().unwrap();
         let pivot_row_begin = col_storage.len();
 
@@ -274,6 +279,7 @@ pub fn order_colamd<'a>(
                 }
             }
         }
+        //TODO check unwrap
         let pivot_r = pivot_r.unwrap();
 
         // clear for next iteration.
@@ -454,6 +460,8 @@ impl ColsQueue {
         } else {
             self.next[self.prev[col]] = self.next[col];
             self.prev[self.next[col]] = self.prev[col];
+
+            //will panic if score is not valid
             if self.score2head[score].unwrap() == col {
                 self.score2head[score] = Some(self.next[col]);
             }
@@ -489,6 +497,7 @@ pub fn find_diag_matching<'a>(
         });
 
         'dfs_loop: while !dfs_stack.is_empty() {
+            //guaranteed to exist
             let cur_step = dfs_stack.last_mut().unwrap();
             let c = cur_step.col;
             let col_rows = get_col(c);
@@ -558,6 +567,7 @@ pub fn find_block_diag_form<'a>(
     size: usize,
     get_col: impl Fn(usize) -> &'a [usize],
 ) -> BlockDiagForm {
+    //TODO check unwrap
     let row2col = find_diag_matching(size, &get_col).unwrap();
 
     struct Step {
@@ -579,6 +589,7 @@ pub fn find_block_diag_form<'a>(
             cur_i: 0,
         });
         while !dfs_stack.is_empty() {
+            //guaranteed to exist
             let cur_step = dfs_stack.last_mut().unwrap();
             let c = cur_step.col;
             if !is_visited[c] {
@@ -634,10 +645,12 @@ pub fn find_block_diag_form<'a>(
             cur_i: 0,
         });
         while !dfs_stack.is_empty() {
+            //guaranteed to exist
             let cur_step = dfs_stack.last_mut().unwrap();
             let c = cur_step.col;
             if !is_visited[c] {
                 is_visited[c] = true;
+                //guaranteed to exist, has at least one element
                 block_cols.last_mut().unwrap().push(c);
             } else {
                 cur_step.cur_i += 1;
