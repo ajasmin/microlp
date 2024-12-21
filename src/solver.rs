@@ -329,10 +329,7 @@ impl Solver {
             },
             0.1,
             &mut scratch,
-        )
-        .map_err(|e| match e {
-            crate::sparse::Error::SingularMatrix => Error::SingularMatrix,
-        })?;
+        )?;
         let lu_factors_transp = lu_factors.transpose();
 
         let nb_var_is_fixed = vec![false; nb_vars.len()];
@@ -1428,10 +1425,7 @@ impl BasisSolver {
             },
             0.1,
             &mut self.scratch,
-        )
-        .map_err(|e| match e {
-            crate::sparse::Error::SingularMatrix => Error::SingularMatrix,
-        })?;
+        )?;
         self.lu_factors_transp = self.lu_factors.transpose();
         Ok(())
     }

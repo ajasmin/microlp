@@ -1,5 +1,6 @@
 use crate::helpers::to_dense;
 use sprs::{CsMat, CsVec};
+use std::fmt::{Display, Formatter};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SparseVec {
@@ -338,6 +339,14 @@ pub struct Perm {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
     SingularMatrix,
+}
+impl Display for Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let r = match self {
+            Error::SingularMatrix => "Singular matrix",
+        };
+        write!(f, "{}", r)
+    }
 }
 
 #[cfg(test)]

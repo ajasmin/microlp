@@ -179,12 +179,16 @@ pub enum Error {
     Unbounded,
     /// An internal error occurred.
     InternalError(String),
-    /// A singular matrix was found
-    SingularMatrix,
 }
 impl From<StructureError> for Error {
     fn from(err: StructureError) -> Self {
         Error::InternalError(err.to_string())
+    }
+}
+
+impl From<sparse::Error> for Error {
+    fn from(value: sparse::Error) -> Self {
+        Error::InternalError(value.to_string())
     }
 }
 
@@ -193,7 +197,6 @@ impl std::fmt::Display for Error {
         let msg = match self {
             Error::Infeasible => "problem is infeasible",
             Error::Unbounded => "problem is unbounded",
-            Error::SingularMatrix => "problem contains a singular matrix",
             Error::InternalError(msg) => msg,
         };
         msg.fmt(f)
