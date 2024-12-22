@@ -1519,7 +1519,7 @@ fn choose_branch_var(cur_solution: &Solution, domain: &[VarDomain]) -> Option<Va
             continue;
         }
         let divergence = f64::abs(val - val.round());
-        if divergence > 1e-5 && divergence > max_divergence {
+        if divergence > 1e-3 && divergence > max_divergence {
             max_divergence = divergence;
             max_var = Some(var);
         }

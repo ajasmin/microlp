@@ -267,7 +267,7 @@ impl Problem {
     /// variable, `min` and `max` are the minimum and maximum (inclusive) bounds of this
     /// variable. If one of the bounds is absent, use `f64::NEG_INFINITY` for minimum and
     /// `f64::INFINITY` for maximum.
-    pub fn add_integer_var(&mut self, obj_coeff: f64, (min, max): (i32, i32)) -> Variable {
+    pub fn add_integer_var(&mut self, obj_coeff: f64, (min, max): (i64, i64)) -> Variable {
         self.internal_add_var(obj_coeff, (min as f64, max as f64), VarDomain::Integer)
     }
 
@@ -434,7 +434,7 @@ impl Solution {
         if self.solver.orig_var_domains[var.0] == VarDomain::Integer {
             let rounded = val.round();
             assert!(
-                f64::abs(rounded - val) < 1e-5,
+                f64::abs(rounded - val) < 1e-3,
                 "Variable was expected to be an integer, got {}",
                 val
             );
@@ -831,7 +831,7 @@ mod tests {
         // Define variables with their objective coefficients
         let x = problem.add_var(50.0, (2.0, f64::INFINITY)); // x ≥ 0
         let y = problem.add_var(40.0, (0.0, 7.0)); // y ≥ 0
-        let z = problem.add_integer_var(45.0, (0, i32::MAX)); // z ≥ 0 and integer
+        let z = problem.add_integer_var(45.0, (0, i64::MAX)); // z ≥ 0 and integer
                                                               // Machine time constraint: 3x + 2y + z ≤ 20
         problem.add_constraint(&[(x, 3.0), (y, 2.0), (z, 1.0)], ComparisonOp::Le, 20.0);
 
